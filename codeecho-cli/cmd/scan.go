@@ -17,13 +17,17 @@ import (
 
 // FileInfo represents information about a scanned file
 type FileInfo struct {
-	Path         string `json:"path"`
-	RelativePath string `json:"relative_path"`
-	Size         int64  `json:"size"`
-	ModTime      string `json:"mod_time"`
-	Content      string `json:"content,omitempty"`
-	Language     string `json:"language,omitempty"`
-	LineCount    int    `json:"line_count,omitempty"`
+	Path             string `json:"path"`
+	RelativePath     string `json:"relative_path"`
+	Size             int64  `json:"size"`
+	SizeFormatted    string `json:"size_formatted"`
+	ModTime          string `json:"mod_time"`
+	ModTimeFormatted string `json:"mod_time_formatted"`
+	Content          string `json:"content,omitempty"`
+	Language         string `json:"language,omitempty"`
+	LineCount        int    `json:"line_count,omitempty"`
+	Extension        string `json:"extension,omitempty"`
+	IsText           bool   `json:"is_text"`
 }
 
 // ScanResult represents the complete scan result
@@ -54,6 +58,7 @@ var (
 	excludeDirs    []string
 	includeExts    []string
 	includeContent bool
+	excludeContent bool
 )
 
 // scanCmd represents the scan command
@@ -70,7 +75,7 @@ Output Formats:
   markdown   - Human-readable markdown format
 
 Examples:
-  codeecho scan .                             # Basic XML scan
+  codeecho scan .                              # Basic XML scan
   codeecho scan . --format json               # JSON output
   codeecho scan . --remove-comments           # Strip comments
   codeecho scan . --compress-code             # Minify code
@@ -85,7 +90,7 @@ func init() {
 
 	// Output format flags
 	scanCmd.Flags().StringVarP(&outputFormat, "format", "f", "xml", "Output format: xml, json, markdown")
-	scanCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file (default: stdout)")
+	scanCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file (default: auto-generated)")
 	scanCmd.Flags().BoolVar(&includeSummary, "include-summary", true, "Include file summary section")
 	scanCmd.Flags().BoolVar(&includeDirectoryTree, "include-tree", true, "Include directory structure")
 	scanCmd.Flags().BoolVar(&showLineNumbers, "line-numbers", false, "Show line numbers in code blocks")
@@ -97,7 +102,8 @@ func init() {
 	scanCmd.Flags().BoolVar(&removeEmptyLines, "remove-empty-lines", false, "Remove empty lines from files")
 
 	// File filtering flags
-	scanCmd.Flags().BoolVar(&includeContent, "content", true, "Include file contents (disable for structure-only)")
+	scanCmd.Flags().BoolVar(&includeContent, "content", true, "Include file contents")
+	scanCmd.Flags().BoolVar(&excludeContent, "no-content", false, "Exclude file contents (structure only)")
 	scanCmd.Flags().StringSliceVar(&excludeDirs, "exclude-dirs",
 		[]string{".git", "node_modules", "vendor", ".vscode", ".idea", "target", "build", "dist"},
 		"Directories to exclude")
@@ -125,6 +131,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Scanning repository at %s...\n", absPath)
+
+	if excludeContent {
+		includeContent = false
+	}
+
 	if compressCode || removeComments || removeEmptyLines {
 		fmt.Println("File processing enabled:")
 		if compressCode {
@@ -178,9 +189,60 @@ func runScan(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Output written to %s\n", autoFile)
 	}
 
-	fmt.Printf("\nScan Summary: %d files processed, %s total size\n",
-		result.TotalFiles,
-		formatBytes(result.TotalSize))
+	// Enhanced scan summary
+	fmt.Printf("\nScan Summary:\n")
+	fmt.Printf("  Files processed: %d\n", result.TotalFiles)
+	fmt.Printf("  Total size: %s\n", formatBytes(result.TotalSize))
+
+	// Show file type breakdown
+	fileTypes := make(map[string]int)
+	textFiles := 0
+	binaryFiles := 0
+
+	for _, file := range result.Files {
+		if file.IsText {
+			textFiles++
+		} else {
+			binaryFiles++
+		}
+
+		if file.Language != "" {
+			fileTypes[file.Language]++
+		} else if file.Extension != "" {
+			fileTypes[file.Extension]++
+		} else {
+			fileTypes["no extension"]++
+		}
+	}
+
+	fmt.Printf("  Text files: %d, Binary files: %d\n", textFiles, binaryFiles)
+
+	// Show top file types
+	if len(fileTypes) > 0 {
+		fmt.Printf("  Top file types: ")
+		type kv struct {
+			Key   string
+			Value int
+		}
+		var sortedTypes []kv
+		for k, v := range fileTypes {
+			sortedTypes = append(sortedTypes, kv{k, v})
+		}
+		sort.Slice(sortedTypes, func(i, j int) bool {
+			return sortedTypes[i].Value > sortedTypes[j].Value
+		})
+
+		for i, kv := range sortedTypes {
+			if i > 2 { // Show top 3
+				break
+			}
+			if i > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%s (%d)", kv.Key, kv.Value)
+		}
+		fmt.Printf("\n")
+	}
 
 	return nil
 }
@@ -210,16 +272,24 @@ func scanRepository(rootPath string) (*ScanResult, error) {
 				return err
 			}
 
+			relativePath := getRelativePath(rootPath, path)
+			language := detectLanguage(path)
+			extension := filepath.Ext(path)
+
 			fileInfo := FileInfo{
-				Path:         path,
-				RelativePath: getRelativePath(rootPath, path),
-				Size:         info.Size(),
-				ModTime:      info.ModTime().Format(time.RFC3339),
-				Language:     detectLanguage(path),
+				Path:             path,
+				RelativePath:     relativePath,
+				Size:             info.Size(),
+				SizeFormatted:    formatBytes(info.Size()),
+				ModTime:          info.ModTime().Format(time.RFC3339),
+				ModTimeFormatted: info.ModTime().Format("2006-01-02 15:04:05"),
+				Language:         language,
+				Extension:        extension,
+				IsText:           isTextFile(path, extension),
 			}
 
-			// Include content if requested
-			if includeContent {
+			// Include content if requested and it's a text file
+			if includeContent && fileInfo.IsText {
 				content, err := os.ReadFile(path)
 				if err != nil {
 					fmt.Printf("Warning: Could not read %s: %v\n", path, err)
@@ -227,7 +297,7 @@ func scanRepository(rootPath string) (*ScanResult, error) {
 					// Apply file processing
 					processedContent := processFileContent(string(content), fileInfo.Language)
 					fileInfo.Content = processedContent
-					fileInfo.LineCount = strings.Count(processedContent, "\n") + 1
+					fileInfo.LineCount = countLines(processedContent)
 				}
 			}
 
@@ -436,21 +506,33 @@ func generateXMLOutput(result *ScanResult) (string, error) {
 
 	for _, file := range result.Files {
 		builder.WriteString(fmt.Sprintf(`<file path="%s"`, escapeXML(file.RelativePath)))
+
+		// Add metadata attributes
 		if file.Language != "" {
 			builder.WriteString(fmt.Sprintf(` language="%s"`, file.Language))
 		}
 		if file.LineCount > 0 {
 			builder.WriteString(fmt.Sprintf(` lines="%d"`, file.LineCount))
 		}
-		builder.WriteString(fmt.Sprintf(` size="%s"`, formatBytes(file.Size)))
+		builder.WriteString(fmt.Sprintf(` size="%s"`, file.SizeFormatted))
+
+		if file.Extension != "" {
+			builder.WriteString(fmt.Sprintf(` extension="%s"`, file.Extension))
+		}
+
+		builder.WriteString(fmt.Sprintf(` modified="%s"`, file.ModTimeFormatted))
+		builder.WriteString(fmt.Sprintf(` is_text="%t"`, file.IsText))
 		builder.WriteString(">\n")
 
-		if includeContent && file.Content != "" {
+		// Include content only for text files and if requested
+		if includeContent && file.Content != "" && file.IsText {
 			if showLineNumbers {
 				builder.WriteString(addLineNumbers(file.Content))
 			} else {
 				builder.WriteString(escapeXML(file.Content))
 			}
+		} else if !file.IsText {
+			builder.WriteString("<!-- Binary file - content not included -->")
 		} else {
 			builder.WriteString("<!-- Content not included -->")
 		}
@@ -543,17 +625,27 @@ func generateMarkdownOutput(result *ScanResult) (string, error) {
 	builder.WriteString("## Files\n\n")
 	for _, file := range result.Files {
 		builder.WriteString(fmt.Sprintf("### %s\n\n", file.RelativePath))
-		builder.WriteString(fmt.Sprintf("**Size:** %s", formatBytes(file.Size)))
+
+		// Enhanced metadata display
+		builder.WriteString(fmt.Sprintf("**Size:** %s", file.SizeFormatted))
 		if file.Language != "" {
 			builder.WriteString(fmt.Sprintf(" | **Language:** %s", file.Language))
 		}
 		if file.LineCount > 0 {
 			builder.WriteString(fmt.Sprintf(" | **Lines:** %d", file.LineCount))
 		}
+		if file.Extension != "" {
+			builder.WriteString(fmt.Sprintf(" | **Extension:** %s", file.Extension))
+		}
+		builder.WriteString(fmt.Sprintf(" | **Modified:** %s", file.ModTimeFormatted))
+		builder.WriteString(fmt.Sprintf(" | **Text File:** %t", file.IsText))
 		builder.WriteString("\n\n")
 
-		if includeContent && file.Content != "" {
+		// Content display
+		if includeContent && file.Content != "" && file.IsText {
 			builder.WriteString(fmt.Sprintf("```%s\n%s\n```\n\n", strings.ToLower(file.Language), file.Content))
+		} else if !file.IsText {
+			builder.WriteString("*Binary file - content not displayed*\n\n")
 		} else {
 			builder.WriteString("*Content not included*\n\n")
 		}
@@ -565,43 +657,49 @@ func generateMarkdownOutput(result *ScanResult) (string, error) {
 }
 
 func generateDirectoryTree(files []FileInfo) string {
-	var builder strings.Builder
-	processed := make(map[string]bool)
+	if len(files) == 0 {
+		return ""
+	}
 
-	// Extract project root name
-	if len(files) > 0 {
-		firstFile := files[0].RelativePath
-		parts := strings.Split(firstFile, string(filepath.Separator))
-		if len(parts) > 0 {
-			// Determine common root
-			rootName := filepath.Base(files[0].Path)
-			if rootName == "." {
-				rootName = "project"
-			}
-			builder.WriteString(fmt.Sprintf("%s/\n", rootName))
+	// Determine project root name
+	projectRoot := "project"
+	if len(files) > 0 && files[0].Path != "" {
+		dir := filepath.Dir(files[0].Path)
+		if dir != "." && dir != "/" {
+			projectRoot = filepath.Base(dir)
 		}
 	}
+
+	// Build directory structure
+	var result strings.Builder
+	result.WriteString(projectRoot + "/\n")
+
+	// Track processed paths to avoid duplicates
+	processed := make(map[string]bool)
 
 	for _, file := range files {
 		parts := strings.Split(file.RelativePath, string(filepath.Separator))
 
+		// Build each level of the path
 		for i := range parts {
-			path := strings.Join(parts[:i+1], "/")
-			if !processed[path] {
+			pathSoFar := strings.Join(parts[:i+1], "/")
+
+			if !processed[pathSoFar] {
+				processed[pathSoFar] = true
 				indent := strings.Repeat("  ", i+1)
+
 				if i == len(parts)-1 {
 					// It's a file
-					builder.WriteString(fmt.Sprintf("%s%s\n", indent, parts[i]))
+					result.WriteString(fmt.Sprintf("%s%s\n", indent, parts[i]))
 				} else {
 					// It's a directory
-					builder.WriteString(fmt.Sprintf("%s%s/\n", indent, parts[i]))
+					result.WriteString(fmt.Sprintf("%s%s/\n", indent, parts[i]))
 				}
-				processed[path] = true
 			}
 		}
 	}
 
-	return builder.String()
+	return result.String()
 }
 
 func detectLanguage(path string) string {
@@ -693,4 +791,66 @@ func generateAutoFilename(repoPath, format string) string {
 	filename += "-" + timestamp + ext
 
 	return filename
+}
+
+// isTextFile determines if a file is likely to be a text file
+func isTextFile(path, extension string) bool {
+	// Known text extensions
+	textExtensions := map[string]bool{
+		".txt": true, ".md": true, ".rst": true, ".asciidoc": true,
+		".go": true, ".py": true, ".js": true, ".ts": true, ".jsx": true, ".tsx": true,
+		".java": true, ".c": true, ".cpp": true, ".cc": true, ".cxx": true, ".h": true, ".hpp": true,
+		".cs": true, ".php": true, ".rb": true, ".rs": true, ".swift": true, ".kt": true,
+		".html": true, ".htm": true, ".xml": true, ".xhtml": true,
+		".css": true, ".scss": true, ".sass": true, ".less": true,
+		".json": true, ".yaml": true, ".yml": true, ".toml": true, ".ini": true, ".cfg": true, ".conf": true,
+		".sh": true, ".bash": true, ".zsh": true, ".fish": true, ".ps1": true, ".bat": true, ".cmd": true,
+		".sql": true, ".graphql": true, ".gql": true,
+		".dockerfile": true, ".gitignore": true, ".gitattributes": true,
+		".makefile": true, ".cmake": true,
+		".r": true, ".rmd": true, ".m": true, ".scala": true, ".clj": true, ".hs": true,
+		".vim": true, ".lua": true, ".pl": true, ".tcl": true,
+		".tex": true, ".bib": true, ".cls": true, ".sty": true,
+		".csv": true, ".tsv": true, ".log": true,
+	}
+
+	ext := strings.ToLower(extension)
+	if textExtensions[ext] {
+		return true
+	}
+
+	// Files without extensions but with known names
+	fileName := strings.ToLower(filepath.Base(path))
+	textFiles := map[string]bool{
+		"readme": true, "license": true, "changelog": true, "contributing": true,
+		"authors": true, "contributors": true, "copying": true, "install": true,
+		"news": true, "thanks": true, "todo": true, "version": true,
+		"makefile": true, "dockerfile": true, "jenkinsfile": true,
+		"gemfile": true, "rakefile": true, "guardfile": true, "procfile": true,
+		".gitignore": true, ".gitattributes": true, ".dockerignore": true,
+		".eslintrc": true, ".prettierrc": true, ".babelrc": true,
+	}
+
+	return textFiles[fileName]
+}
+
+// countLines counts the number of lines in content more accurately
+func countLines(content string) int {
+	if content == "" {
+		return 0
+	}
+
+	lines := 1
+	for _, char := range content {
+		if char == '\n' {
+			lines++
+		}
+	}
+
+	// Handle case where file ends with newline
+	if strings.HasSuffix(content, "\n") {
+		lines--
+	}
+
+	return lines
 }
