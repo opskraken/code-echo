@@ -1,4 +1,3 @@
-// cmd/doc.go
 package cmd
 
 import (
@@ -8,6 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opskraken/codeecho-cli/config"
+	"github.com/opskraken/codeecho-cli/output"
+	"github.com/opskraken/codeecho-cli/scanner"
+	"github.com/opskraken/codeecho-cli/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +18,10 @@ var (
 	docOutputFile string
 	docType       string
 )
+
+// ScanResult is an alias for scanner.ScanResult for backward compatibility
+type ScanResult = scanner.ScanResult
+type FileInfo = scanner.FileInfo
 
 // docCmd represents the doc command
 var docCmd = &cobra.Command{
@@ -38,6 +45,61 @@ func init() {
 	// Add flags
 	docCmd.Flags().StringVarP(&docOutputFile, "output", "o", "", "Output file (default: README.md)")
 	docCmd.Flags().StringVarP(&docType, "type", "t", "readme", "Documentation type: readme, api, overview")
+}
+
+// Helper wrapper functions
+func scanRepository(path string) (*ScanResult, error) {
+	opts := scanner.ScanOptions{
+		IncludeSummary:       true,
+		IncludeDirectoryTree: true,
+		ShowLineNumbers:      false,
+		OutputParsableFormat: true,
+		CompressCode:         false,
+		RemoveComments:       false,
+		RemoveEmptyLines:     false,
+		ExcludeDirs:          []string{".git", "node_modules", "vendor", ".vscode", ".idea", "target", "build", "dist"},
+		IncludeExts:          []string{".go", ".js", ".ts", ".jsx", ".tsx", ".json", ".md", ".html", ".css", ".py", ".java", ".cpp", ".c", ".h", ".rs", ".rb", ".php", ".yml", ".yaml", ".toml", ".xml"},
+		IncludeContent:       true,
+	}
+	return scanner.ScanRepository(path, opts)
+}
+
+func generateDirectoryTree(files []FileInfo) string {
+	return output.GenerateDirectoryTree(files)
+}
+
+func formatBytes(bytes int64) string {
+	return utils.FormatBytes(bytes)
+}
+
+func GenerateXMLOutput(result *ScanResult) (string, error) {
+	opts := config.OutputOptions{
+		IncludeSummary:       true,
+		IncludeDirectoryTree: true,
+		ShowLineNumbers:      false,
+		IncludeContent:       true,
+		RemoveComments:       false,
+		RemoveEmptyLines:     false,
+		CompressCode:         false,
+	}
+	return output.GenerateXMLOutput(result, opts)
+}
+
+func GenerateJSONOutput(result *ScanResult) (string, error) {
+	return output.GenerateJSONOutput(result)
+}
+
+func GenerateMarkdownOutput(result *ScanResult) (string, error) {
+	opts := config.OutputOptions{
+		IncludeSummary:       true,
+		IncludeDirectoryTree: true,
+		ShowLineNumbers:      false,
+		IncludeContent:       true,
+		RemoveComments:       false,
+		RemoveEmptyLines:     false,
+		CompressCode:         false,
+	}
+	return output.GenerateMarkdownOutput(result, opts)
 }
 
 func runDoc(cmd *cobra.Command, args []string) error {

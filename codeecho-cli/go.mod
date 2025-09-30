@@ -1,4 +1,4 @@
-module github.com/opskraken/code-echo/cli
+module github.com/opskraken/codeecho-cli
 
 go 1.25.1
 
