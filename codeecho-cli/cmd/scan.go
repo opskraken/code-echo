@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
+	"time"
 
 	"github.com/opskraken/codeecho-cli/config"
 	"github.com/opskraken/codeecho-cli/output"
@@ -35,7 +34,6 @@ var (
 	excludeContent bool
 )
 
-// scanCmd represents the scan command
 var scanCmd = &cobra.Command{
 	Use:   "scan [path]",
 	Short: "Scan repository and generate AI-ready context",
@@ -123,7 +121,57 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	opts := scanner.ScanOptions{
+	// Determine output file
+	var outputFilePath string
+	if outputFile != "" {
+		outputFilePath = outputFile
+	} else {
+		// Generate auto filename
+		outputOpts := config.OutputOptions{
+			IncludeSummary:       includeSummary,
+			IncludeDirectoryTree: includeDirectoryTree,
+			ShowLineNumbers:      showLineNumbers,
+			IncludeContent:       includeContent,
+			RemoveComments:       removeComments,
+			RemoveEmptyLines:     removeEmptyLines,
+			CompressCode:         compressCode,
+		}
+		outputFilePath = utils.GenerateAutoFilename(absPath, outputFormat, outputOpts)
+	}
+
+	// Create output file
+	outFile, err := os.Create(outputFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	// Create output options
+	outputOpts := config.OutputOptions{
+		IncludeSummary:       includeSummary,
+		IncludeDirectoryTree: includeDirectoryTree,
+		ShowLineNumbers:      showLineNumbers,
+		IncludeContent:       includeContent,
+		RemoveComments:       removeComments,
+		RemoveEmptyLines:     removeEmptyLines,
+		CompressCode:         compressCode,
+	}
+
+	// Create streaming writer based on format
+	writer, err := output.NewStreamingWriter(outFile, outputFormat, outputOpts)
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	// Write header
+	scanTime := time.Now().Format(time.RFC3339)
+	if err := writer.WriteHeader(absPath, scanTime); err != nil {
+		return fmt.Errorf("failed to write header: %w", err)
+	}
+
+	// Create scanner with streaming handler
+	scanOpts := scanner.ScanOptions{
 		IncludeSummary:       includeSummary,
 		IncludeDirectoryTree: includeDirectoryTree,
 		ShowLineNumbers:      showLineNumbers,
@@ -135,106 +183,48 @@ func runScan(cmd *cobra.Command, args []string) error {
 		IncludeExts:          includeExts,
 		IncludeContent:       includeContent,
 	}
-	// Perform the scan
-	result, err := scanner.ScanRepository(absPath, opts)
+
+	// Each file gets written immediately, then discarded
+	streamingScanner := scanner.NewStreamingScanner(absPath, scanOpts, writer.WriteFile)
+
+	// Perform the scan (streaming mode!)
+	fmt.Println("Streaming scan in progress...")
+	if scanOpts.IncludeDirectoryTree {
+		if err := writer.WriteTree(streamingScanner.GetFilePaths()); err != nil {
+			return fmt.Errorf("failed to write tree: %w", err)
+		}
+	}
+	stats, err := streamingScanner.Scan()
 	if err != nil {
 		return fmt.Errorf("scan failed: %w", err)
 	}
 
-	outputOpts := config.OutputOptions{
-		IncludeSummary:       includeSummary,
-		IncludeDirectoryTree: includeDirectoryTree,
-		ShowLineNumbers:      showLineNumbers,
-		IncludeContent:       includeContent,
-		RemoveComments:       removeComments,
-		RemoveEmptyLines:     removeEmptyLines,
-		CompressCode:         compressCode,
-	}
-	// Generate output based on format
-	var outputContent string
-	switch strings.ToLower(outputFormat) {
-	case "xml":
-		outputContent, err = output.GenerateXMLOutput(result, outputOpts)
-	case "json":
-		outputContent, err = output.GenerateJSONOutput(result)
-	case "markdown", "md":
-		outputContent, err = output.GenerateMarkdownOutput(result, outputOpts)
-	default:
-		return fmt.Errorf("unsupported output format: %s (supported: xml, json, markdown)", outputFormat)
+	// Write footer with final statistics
+	if err := writer.WriteFooter(stats); err != nil {
+		return fmt.Errorf("failed to write footer: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to generate output: %w", err)
-	}
-
-	// Write output
-	if outputFile != "" {
-		err = os.WriteFile(outputFile, []byte(outputContent), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to write output file: %w", err)
-		}
-		fmt.Printf("Output written to %s\n", outputFile)
-	} else {
-		// Auto-generate filename if not specified
-		autoFile := utils.GenerateAutoFilename(result.RepoPath, outputFormat, outputOpts)
-		err = os.WriteFile(autoFile, []byte(outputContent), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to write output file: %w", err)
-		}
-		fmt.Printf("Output written to %s\n", autoFile)
-	}
+	fmt.Printf("\nOutput written to %s\n", outputFilePath)
 
 	// Enhanced scan summary
 	fmt.Printf("\nScan Summary:\n")
-	fmt.Printf("  Files processed: %d\n", result.TotalFiles)
-	fmt.Printf("  Total size: %s\n", utils.FormatBytes(result.TotalSize))
-
-	// Show file type breakdown
-	fileTypes := make(map[string]int)
-	textFiles := 0
-	binaryFiles := 0
-
-	for _, file := range result.Files {
-		if file.IsText {
-			textFiles++
-		} else {
-			binaryFiles++
-		}
-
-		if file.Language != "" {
-			fileTypes[file.Language]++
-		} else if file.Extension != "" {
-			fileTypes[file.Extension]++
-		} else {
-			fileTypes["no extension"]++
-		}
-	}
-
-	fmt.Printf("  Text files: %d, Binary files: %d\n", textFiles, binaryFiles)
+	fmt.Printf("  Files processed: %d\n", stats.TotalFiles)
+	fmt.Printf("  Total size: %s\n", utils.FormatBytes(stats.TotalSize))
+	fmt.Printf("  Text files: %d, Binary files: %d\n", stats.TextFiles, stats.BinaryFiles)
 
 	// Show top file types
-	if len(fileTypes) > 0 {
-		fmt.Printf("  Top file types: ")
-		type kv struct {
-			Key   string
-			Value int
-		}
-		var sortedTypes []kv
-		for k, v := range fileTypes {
-			sortedTypes = append(sortedTypes, kv{k, v})
-		}
-		sort.Slice(sortedTypes, func(i, j int) bool {
-			return sortedTypes[i].Value > sortedTypes[j].Value
-		})
-
-		for i, kv := range sortedTypes {
-			if i > 2 { // Show top 3
-				break
-			}
-			if i > 0 {
+	if len(stats.LanguageCounts) > 0 {
+		fmt.Printf("  Languages detected: ")
+		count := 0
+		for lang, num := range stats.LanguageCounts {
+			if count > 0 {
 				fmt.Printf(", ")
 			}
-			fmt.Printf("%s (%d)", kv.Key, kv.Value)
+			fmt.Printf("%s (%d)", lang, num)
+			count++
+			if count >= 5 { // Show top 5
+				break
+			}
 		}
 		fmt.Printf("\n")
 	}

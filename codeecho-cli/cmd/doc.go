@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opskraken/codeecho-cli/config"
 	"github.com/opskraken/codeecho-cli/output"
 	"github.com/opskraken/codeecho-cli/scanner"
 	"github.com/opskraken/codeecho-cli/utils"
@@ -47,7 +46,7 @@ func init() {
 	docCmd.Flags().StringVarP(&docType, "type", "t", "readme", "Documentation type: readme, api, overview")
 }
 
-// Helper wrapper functions
+// scanRepository uses AnalysisScanner for full repository analysis
 func scanRepository(path string) (*ScanResult, error) {
 	opts := scanner.ScanOptions{
 		IncludeSummary:       true,
@@ -59,9 +58,12 @@ func scanRepository(path string) (*ScanResult, error) {
 		RemoveEmptyLines:     false,
 		ExcludeDirs:          []string{".git", "node_modules", "vendor", ".vscode", ".idea", "target", "build", "dist"},
 		IncludeExts:          []string{".go", ".js", ".ts", ".jsx", ".tsx", ".json", ".md", ".html", ".css", ".py", ".java", ".cpp", ".c", ".h", ".rs", ".rb", ".php", ".yml", ".yaml", ".toml", ".xml"},
-		IncludeContent:       true,
+		IncludeContent:       true, // Doc needs content for analysis
 	}
-	return scanner.ScanRepository(path, opts)
+
+	// Use analysis scanner (not streaming) for full in-memory analysis
+	analysisScanner := scanner.NewAnalysisScanner(path, opts)
+	return analysisScanner.Scan()
 }
 
 func generateDirectoryTree(files []FileInfo) string {
@@ -70,36 +72,6 @@ func generateDirectoryTree(files []FileInfo) string {
 
 func formatBytes(bytes int64) string {
 	return utils.FormatBytes(bytes)
-}
-
-func GenerateXMLOutput(result *ScanResult) (string, error) {
-	opts := config.OutputOptions{
-		IncludeSummary:       true,
-		IncludeDirectoryTree: true,
-		ShowLineNumbers:      false,
-		IncludeContent:       true,
-		RemoveComments:       false,
-		RemoveEmptyLines:     false,
-		CompressCode:         false,
-	}
-	return output.GenerateXMLOutput(result, opts)
-}
-
-func GenerateJSONOutput(result *ScanResult) (string, error) {
-	return output.GenerateJSONOutput(result)
-}
-
-func GenerateMarkdownOutput(result *ScanResult) (string, error) {
-	opts := config.OutputOptions{
-		IncludeSummary:       true,
-		IncludeDirectoryTree: true,
-		ShowLineNumbers:      false,
-		IncludeContent:       true,
-		RemoveComments:       false,
-		RemoveEmptyLines:     false,
-		CompressCode:         false,
-	}
-	return output.GenerateMarkdownOutput(result, opts)
 }
 
 func runDoc(cmd *cobra.Command, args []string) error {
@@ -122,7 +94,7 @@ func runDoc(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Generating %s documentation for %s...\n", docType, absPath)
 
-	// First, scan the repository
+	// First, scan the repository using AnalysisScanner
 	result, err := scanRepository(absPath)
 	if err != nil {
 		return fmt.Errorf("scan failed: %w", err)

@@ -143,23 +143,4 @@ func GenerateXMLOutput(result *scanner.ScanResult, opts config.OutputOptions) (s
 	return builder.String(), nil
 }
 
-// Helper functions for XML processing
-func escapeXML(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	s = strings.ReplaceAll(s, `"`, "&quot;")
-	s = strings.ReplaceAll(s, `'`, "&#39;")
-	return s
-}
 
-func addLineNumbers(content string) string {
-	lines := strings.Split(content, "\n")
-	var numberedLines []string
-
-	for i, line := range lines {
-		numberedLines = append(numberedLines, fmt.Sprintf("%4d: %s", i+1, line))
-	}
-
-	return strings.Join(numberedLines, "\n")
-}
