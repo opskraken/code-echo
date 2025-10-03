@@ -13,7 +13,8 @@ import (
 type StreamingScanner struct {
 	rootPath    string
 	opts        ScanOptions
-	fileHandler func(*FileInfo) error // Callback for each file
+	fileHandler func(*FileInfo) error
+	treeWriter  func([]string) error
 	stats       *StreamingStats
 	filePaths   []string
 }
@@ -38,6 +39,10 @@ func NewStreamingScanner(rootPath string, opts ScanOptions, fileHandler func(*Fi
 		},
 		filePaths: []string{},
 	}
+}
+
+func (s *StreamingScanner) SetTreeWriter(treeWriter func([]string) error) {
+	s.treeWriter = treeWriter
 }
 
 func (s *StreamingScanner) GetFilePaths() []string {
@@ -70,13 +75,22 @@ func (s *StreamingScanner) collectPaths() error {
 // This is where streaming happens - we don't accumulate anything!
 func (s *StreamingScanner) Scan() (*StreamingStats, error) {
 	{
+		// collect paths if tree is needed
 		if s.opts.IncludeDirectoryTree {
 			if err := s.collectPaths(); err != nil {
 				return nil, fmt.Errorf("failed to collect paths: %w", err)
 			}
+			// Write tree immediately after collecting paths
+			if s.treeWriter != nil {
+				if err := s.treeWriter(s.filePaths); err != nil {
+					return nil, fmt.Errorf("failed to write tree: %w", err)
+				}
+			}
 		}
+		//  process files and stream content
 		err := filepath.WalkDir(s.rootPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
+				//	Log error
 				fmt.Fprintf(os.Stderr, "Warning: skipping %s: %v\n", path, err)
 				return nil
 			}

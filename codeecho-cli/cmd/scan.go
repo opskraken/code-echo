@@ -186,14 +186,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	// Each file gets written immediately, then discarded
 	streamingScanner := scanner.NewStreamingScanner(absPath, scanOpts, writer.WriteFile)
+	// Set tree writer callback
+	streamingScanner.SetTreeWriter(writer.WriteTree)
 
 	// Perform the scan (streaming mode!)
 	fmt.Println("Streaming scan in progress...")
-	if scanOpts.IncludeDirectoryTree {
-		if err := writer.WriteTree(streamingScanner.GetFilePaths()); err != nil {
-			return fmt.Errorf("failed to write tree: %w", err)
-		}
-	}
 	stats, err := streamingScanner.Scan()
 	if err != nil {
 		return fmt.Errorf("scan failed: %w", err)
