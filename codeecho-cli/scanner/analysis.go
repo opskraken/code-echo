@@ -10,20 +10,62 @@ import (
 	"github.com/opskraken/codeecho-cli/utils"
 )
 
-// AnalysisScanner collects full data in memory for documentation analysis
-// This is separate from StreamingScanner because doc generation needs
-// to analyze the entire codebase at once
 type AnalysisScanner struct {
 	rootPath string
 	opts     ScanOptions
+
+	// NEW: Progress and error tracking
+	progressCallback ProgressCallback
+	errors           []ScanError
+	startTime        time.Time
 }
 
-// NewAnalysisScanner creates a scanner for full repository analysis
 func NewAnalysisScanner(rootPath string, opts ScanOptions) *AnalysisScanner {
 	return &AnalysisScanner{
 		rootPath: rootPath,
 		opts:     opts,
+		errors:   []ScanError{},
 	}
+}
+
+// NEW: Set progress callback
+func (a *AnalysisScanner) SetProgressCallback(callback ProgressCallback) {
+	a.progressCallback = callback
+}
+
+// NEW: Get collected errors
+func (a *AnalysisScanner) GetErrors() []ScanError {
+	return a.errors
+}
+
+// NEW: Report progress
+func (a *AnalysisScanner) reportProgress(phase string, currentFile string, processed, total int) {
+	if a.progressCallback == nil {
+		return
+	}
+
+	progress := ScanProgress{
+		Phase:          phase,
+		CurrentFile:    currentFile,
+		ProcessedFiles: processed,
+		TotalFiles:     total,
+	}
+
+	if total > 0 {
+		progress.Percentage = float64(processed) / float64(total) * 100
+	}
+
+	a.progressCallback(progress)
+}
+
+// NEW: Record error
+func (a *AnalysisScanner) recordError(path string, phase string, err error) {
+	a.errors = append(a.errors, ScanError{
+		Path:    path,
+		Phase:   phase,
+		Error:   err,
+		Skipped: true,
+	})
 }
 
 // Scan performs a full repository scan and returns complete results
