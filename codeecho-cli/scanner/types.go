@@ -40,3 +40,34 @@ type ScanOptions struct {
 	IncludeExts    []string
 	IncludeContent bool
 }
+
+// Progress tracking
+type ScanProgress struct {
+	Phase          string  // "collecting", "scanning", "writing"
+	CurrentFile    string  // File currently being processed
+	ProcessedFiles int     // Files completed
+	TotalFiles     int     // Total files to process (0 if unknown)
+	BytesProcessed int64   // Total bytes processed
+	Percentage     float64 // 0-100
+}
+
+// NEW: Error tracking
+type ScanError struct {
+	Path    string // File path that caused error
+	Phase   string // "read", "parse", "write"
+	Error   error  // The actual error
+	Skipped bool   // Was the file skipped or did scan fail?
+}
+
+// NEW: Complete scan report
+type ScanReport struct {
+	Stats        *StreamingStats
+	Errors       []ScanError
+	SkippedFiles int
+	WarningCount int
+	Duration     string
+	Success      bool
+}
+
+// NEW: Progress callback
+type ProgressCallback func(progress ScanProgress)
