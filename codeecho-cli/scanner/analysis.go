@@ -71,6 +71,8 @@ func (a *AnalysisScanner) recordError(path string, phase string, err error) {
 // Scan performs a full repository scan and returns complete results
 // Unlike StreamingScanner, this keeps all data in memory
 func (a *AnalysisScanner) Scan() (*ScanResult, error) {
+	a.startTime = time.Now()
+
 	result := &ScanResult{
 		RepoPath:       a.rootPath,
 		ScanTime:       time.Now().Format(time.RFC3339),
@@ -79,9 +81,28 @@ func (a *AnalysisScanner) Scan() (*ScanResult, error) {
 		LanguageCounts: make(map[string]int),
 	}
 
+	// First pass: Count total files
+	a.reportProgress("counting", "calculating total files...", 0, 0)
+	totalFiles := 0
+	filepath.WalkDir(a.rootPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() && shouldIncludeFile(path, a.opts.IncludeExts) {
+			if d.IsDir() && shouldExcludeDir(d.Name(), a.opts.ExcludeDirs) {
+				return filepath.SkipDir
+			}
+			totalFiles++
+		}
+		return nil
+	})
+
+	// Second pass: Process files
+	processedFiles := 0
 	err := filepath.WalkDir(a.rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			a.recordError(path, "scan", err)
+			return nil // Continue
 		}
 
 		// Skip excluded directories
@@ -91,12 +112,15 @@ func (a *AnalysisScanner) Scan() (*ScanResult, error) {
 
 		// Process files only
 		if !d.IsDir() && shouldIncludeFile(path, a.opts.IncludeExts) {
+			relativePath := utils.GetRelativePath(a.rootPath, path)
+			a.reportProgress("scanning", relativePath, processedFiles, totalFiles)
+
 			info, err := d.Info()
 			if err != nil {
-				return err
+				a.recordError(path, "stat", err)
+				return nil // Continue
 			}
 
-			relativePath := utils.GetRelativePath(a.rootPath, path)
 			language := detectLanguage(path)
 			extension := filepath.Ext(path)
 
@@ -115,7 +139,17 @@ func (a *AnalysisScanner) Scan() (*ScanResult, error) {
 			// Include content if requested and it's a text file
 			if a.opts.IncludeContent && fileInfo.IsText {
 				content, err := os.ReadFile(path)
-				if err == nil {
+				if err != nil {
+					a.recordError(path, "read", err)
+				} else {
+					// ENHANCED: Content-based detection
+					if fileInfo.Language == "" {
+						fileInfo.Language = detectLanguageFromContent(path, content)
+					}
+					if !fileInfo.IsText && isTextContent(content) {
+						fileInfo.IsText = true
+					}
+
 					processedContent := processFileContent(string(content), fileInfo.Language, a.opts)
 					fileInfo.Content = processedContent
 					fileInfo.LineCount = utils.CountLines(processedContent)
@@ -135,12 +169,14 @@ func (a *AnalysisScanner) Scan() (*ScanResult, error) {
 			if fileInfo.Language != "" {
 				result.LanguageCounts[fileInfo.Language]++
 			}
+			processedFiles++
 		}
 
 		return nil
 	})
 
 	// Sort files by path for consistent output
+	a.reportProgress("sorting", "organizing results...", totalFiles, totalFiles)
 	sort.Slice(result.Files, func(i, j int) bool {
 		return result.Files[i].RelativePath < result.Files[j].RelativePath
 	})
