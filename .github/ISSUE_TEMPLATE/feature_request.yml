@@ -1,0 +1,39 @@
+name: Feature Request
+description: Suggest a new feature for the code-echo MVP
+title: '[Feature] code-echo - '
+labels: ['enhancement', 'mvp']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature for code-echo! Please provide clear details to help us prioritize and implement it.
+  - type: input
+    id: feature-title
+    attributes:
+      label: Feature Title
+      placeholder: e.g., "CLI to bundle code for AI tools"
+    validations:
+      required: true
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature Description
+      description: Describe the feature and why it’s needed.
+      placeholder: |
+        What does this feature do? e.g., "CLI to bundle code for AI tools"
+        Why is it needed? e.g., "Code analysis for AI is manual and slow"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How critical is this feature for the MVP?
+      options:
+        - Must-Have (v0.1)
+        - Should-Have (Post-MVP)
+        - Could-Have (Nice-to-Have)
+        - Won't-Have (Out of Scope)
+      default: 2
+    validations:
+      required: true
