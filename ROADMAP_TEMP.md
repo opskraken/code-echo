@@ -31,4 +31,4 @@ Use this table to triage features. Focus on Must-Haves for MVP.
 - Propose features via [GitHub Issues](https://github.com/NesoHQ/code-echo/issues/new?template=feature_request.md).
 - Vote on priorities with reactions (👍 for high-impact).
 
-*Last Updated: 2025-10-18. Feedback welcome!*
+*Last Updated: 2025-10-19. Feedback welcome!*
